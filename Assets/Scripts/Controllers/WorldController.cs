@@ -1,128 +1,238 @@
-﻿//=======================================================================
-// Copyright Martin "quill18" Glaude 2015.
-//		http://quill18.com
-//=======================================================================
-
+#region License
+// ====================================================
+// Project Porcupine Copyright(C) 2016 Team Porcupine
+// This program comes with ABSOLUTELY NO WARRANTY; This is free software,
+// and you are welcome to redistribute it under certain conditions; See
+// file LICENSE, which is part of this source code package, for details.
+// ====================================================
+#endregion
 using System;
-using System.Linq;
-using UnityEngine;
-using UnityEngine.UI;
 using System.Collections.Generic;
-using UnityEngine.SceneManagement;
-using System.Xml.Serialization;
 using System.IO;
+using System.Linq;
+using System.Xml.Serialization;
+using MoonSharp.Interpreter;
+using Scheduler;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using Random = UnityEngine.Random;
 
-public class WorldController : MonoBehaviour {
+[MoonSharpUserData]
+public class WorldController : MonoBehaviour
+{
+    public SoundController soundController;
+    public TileSpriteController tileSpriteController;
+    public CharacterSpriteController characterSpriteController;
+    public JobSpriteController jobSpriteController;
+    public InventorySpriteController inventorySpriteController;
+    public ShipSpriteController shipSpriteController;
+    public FurnitureSpriteController furnitureSpriteController;
+    public UtilitySpriteController utilitySpriteController;
+    public QuestController questController;
+    public BuildModeController buildModeController;
+    public MouseController mouseController;
+    public KeyboardManager keyboardManager;
+    public CameraController cameraController;
+    public SpawnInventoryController spawnInventoryController;
+    public AutosaveManager autosaveManager;
+    public TradeController TradeController;
+    public ModsManager modsManager;
+    public GameObject inventoryUI;
+    public GameObject circleCursorPrefab;
 
-	public static WorldController Instance { get; protected set; }
+    // If true, a modal dialog box is open, so normal inputs should be ignored.
+    public bool IsModal;
 
-	// The world and tile data
-	public World world { get; protected set; }
+    private static string loadWorldFromFile = null;
 
-	static string loadWorldFromFile = null;
+    public static WorldController Instance { get; protected set; }
 
-	private bool _isPaused = false;
-	public bool IsPaused {
-		get {
-			return  _isPaused || IsModal;
-		}
-		set {
-			_isPaused = value;
-		}
-	}
+    // The world and tile data.
+    public World World { get; protected set; }
 
-	public bool IsModal; // If true, a modal dialog box is open so normal inputs should be ignored.
+    public bool IsPaused
+    {
+        get
+        {
+            return TimeManager.Instance.IsPaused || IsModal;
+        }
 
-	// Use this for initialization
-	void OnEnable () {
-		if(Instance != null) {
-			Debug.LogError("There should never be two world controllers.");
-		}
-		Instance = this;
+        set
+        {
+            TimeManager.Instance.IsPaused = value;
+        }
+    }
 
-		if(loadWorldFromFile != null) {
-			CreateWorldFromSaveFile();
-			loadWorldFromFile = null;
-		}
-		else {
-			CreateEmptyWorld();
-		}
-	}
+    // Use this for initialization.
+    public void OnEnable()
+    {
+        Debug.IsLogEnabled = true;
+        if (Instance != null)
+        {
+            Debug.ULogErrorChannel("WorldController", "There should never be two world controllers.");
+        }
 
-	void Update() {
-		// TODO: Add pause/unpause, speed controls, etc...
-		if(IsPaused == false) {
-			world.Update(Time.deltaTime);
-		}
+        Instance = this;
 
-	}
-		
-	/// <summary>
-	/// Gets the tile at the unity-space coordinates
-	/// </summary>
-	/// <returns>The tile at world coordinate.</returns>
-	/// <param name="coord">Unity World-Space coordinates.</param>
-	public Tile GetTileAtWorldCoord(Vector3 coord) {
-		int x = Mathf.FloorToInt(coord.x + 0.5f);
-		int y = Mathf.FloorToInt(coord.y + 0.5f);
-		
-		return world.GetTileAt(x, y);
-	}
+        new FunctionsManager();
+        new PrototypeManager();
+        new CharacterNameManager();
+        new SpriteManager();
+        new AudioManager();
 
-	public void NewWorld() {
-		Debug.Log("NewWorld button was clicked.");
+        // FIXME: Do something real here. This is just to show how to register a C# event prototype for the Scheduler.
+        PrototypeManager.ScheduledEvent.Add(
+            new ScheduledEvent(
+                "ping_log",
+                (evt) => Debug.ULogChannel("Scheduler", "Event {0} fired", evt.Name)));
 
-		SceneManager.LoadScene( SceneManager.GetActiveScene().name );
-	}
+        string dataPath = System.IO.Path.Combine(Application.streamingAssetsPath, "Data");
+        modsManager = new ModsManager(dataPath);
 
+        if (loadWorldFromFile != null)
+        {
+            CreateWorldFromSaveFile();
+            loadWorldFromFile = null;
+        }
+        else
+        {
+            CreateEmptyWorld();
+        }
 
-	public string FileSaveBasePath() {
-		return 	System.IO.Path.Combine( Application.persistentDataPath, "Saves" );
+        soundController = new SoundController(World);
+    }
 
-	}
+    public void Start()
+    {
+        // Create GameObject so we can have access to a transform which has a position of "Vector3.zero".
+        new GameObject("VisualPath", typeof(VisualPath));
+        GameObject go;
 
+        tileSpriteController = new TileSpriteController(World);
+        characterSpriteController = new CharacterSpriteController(World);
+        furnitureSpriteController = new FurnitureSpriteController(World);
+        utilitySpriteController = new UtilitySpriteController(World);
+        jobSpriteController = new JobSpriteController(World, furnitureSpriteController, utilitySpriteController);
+        inventorySpriteController = new InventorySpriteController(World, inventoryUI);
+        shipSpriteController = new ShipSpriteController(World);
 
+        buildModeController = new BuildModeController();
+        spawnInventoryController = new SpawnInventoryController();
+        mouseController = new MouseController(buildModeController, furnitureSpriteController, utilitySpriteController, circleCursorPrefab);
+        keyboardManager = KeyboardManager.Instance;
+        questController = new QuestController();
+        cameraController = new CameraController();
+        TradeController = new TradeController();
+        autosaveManager = new AutosaveManager();
 
-	public void LoadWorld(string fileName) {
-		Debug.Log("LoadWorld button was clicked.");
+        // Register inputs actions
+        keyboardManager.RegisterInputAction("Pause", KeyboardMappedInputType.KeyUp, () => { IsPaused = !IsPaused; });
+        keyboardManager.RegisterInputAction("DevMode", KeyboardMappedInputType.KeyDown, ChangeDevMode);
 
-		// Reload the scene to reset all data (and purge old references)
-		loadWorldFromFile = fileName;
-		SceneManager.LoadScene( SceneManager.GetActiveScene().name );
+        // Hiding Dev Mode spawn inventory controller if devmode is off.
+        spawnInventoryController.SetUIVisibility(Settings.GetSetting("DialogBoxSettings_developerModeToggle", false));
 
-	}
+        cameraController.Initialize();
+        cameraController.Moved += this.World.OnCameraMoved;
 
-	void CreateEmptyWorld() {
-		// Create a world with Empty tiles
-		world = new World(100, 100);
+        // Initialising controllers.
+        GameObject canvas = GameObject.Find("Canvas");
+        go = Instantiate(Resources.Load("UI/ContextMenu"), canvas.transform.position, canvas.transform.rotation, canvas.transform) as GameObject;
+        go.name = "ContextMenu";
+    }
 
-		// Center the Camera
-		Camera.main.transform.position = new Vector3( world.Width/2, world.Height/2, Camera.main.transform.position.z );
+    public void Update()
+    {
+        TimeManager.Instance.Update(Time.deltaTime);
+    }
 
-	}
+    /// <summary>
+    /// Gets the tile at the Unity-space coordinates.
+    /// </summary>
+    /// <returns>The tile at world coordinate.</returns>
+    /// <param name="coord">Unity World-Space coordinates.</param>
+    public Tile GetTileAtWorldCoord(Vector3 coord)
+    {
+        int x = Mathf.FloorToInt(coord.x + 0.5f);
+        int y = Mathf.FloorToInt(coord.y + 0.5f);
 
-	void CreateWorldFromSaveFile() {
-		Debug.Log("CreateWorldFromSaveFile");
-		// Create a world from our save file data.
+        return World.GetTileAt(x, y, (int)coord.z);
+    }
 
-		XmlSerializer serializer = new XmlSerializer( typeof(World) );
+    public string FileSaveBasePath()
+    {
+        return System.IO.Path.Combine(Application.persistentDataPath, "Saves");
+    }
 
-		// This can throw an exception.
-		// TODO: Show a error message to the user.
-		string saveGameText = File.ReadAllText( loadWorldFromFile );
+    public void NewWorld()
+    {
+        Debug.ULogChannel("WorldController", "NewWorld button was clicked.");
 
-		TextReader reader = new StringReader( saveGameText );
+        Destroy();
+        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+    }
 
+    public void LoadWorld(string fileName)
+    {
+        Debug.ULogChannel("WorldController", "LoadWorld button was clicked.");
 
-		Debug.Log( reader.ToString() );
-		world = (World)serializer.Deserialize(reader);
-		reader.Close();
+        // Reload the scene to reset all data (and purge old references)
+        loadWorldFromFile = fileName;
+        Destroy();
+        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+    }
 
+    public void Destroy()
+    {
+        TimeManager.Instance.Destroy();
+        KeyboardManager.Instance.Destroy();
+        Scheduler.Scheduler.Current.Destroy();
+        GameMenuManager.Instance.Destroy();
+    }
 
+    /// <summary>
+    /// Change the developper mode.
+    /// </summary>
+    public void ChangeDevMode()
+    {
+        bool developerMode = !Settings.GetSetting("DialogBoxSettings_developerModeToggle", false);
+        Settings.SetSetting("DialogBoxSettings_developerModeToggle", developerMode);
+        spawnInventoryController.SetUIVisibility(developerMode);
+        ///FurnitureBuildMenu.instance.RebuildMenuButtons(developerMode);
+    }
 
-		// Center the Camera
-		Camera.main.transform.position = new Vector3( world.Width/2, world.Height/2, Camera.main.transform.position.z );
+    private void CreateEmptyWorld()
+    {
+        // get world size from settings
+        int width = Settings.GetSetting("worldWidth", 100);
+        int height = Settings.GetSetting("worldHeight", 100);
 
-	}
+        // FIXME: Need to read this from settings.
+        int depth = 5;
 
+        // Create a world with Empty tiles
+        World = new World(width, height, depth);
+
+        // Center the Camera
+        Camera.main.transform.position = new Vector3(World.Width / 2, World.Height / 2, Camera.main.transform.position.z);
+    }
+
+    private void CreateWorldFromSaveFile()
+    {
+        Debug.ULogChannel("WorldController", "CreateWorldFromSaveFile");
+
+        // Create a world from our save file data.
+        XmlSerializer serializer = new XmlSerializer(typeof(World));
+
+        // This can throw an exception.
+        // TODO: Show a error message to the user.
+        string saveGameText = File.ReadAllText(loadWorldFromFile);
+
+        TextReader reader = new StringReader(saveGameText);
+
+        // Leaving this for Unity's console because UberLogger mangles multiline messages.
+        Debug.Log(reader.ToString());
+        World = (World)serializer.Deserialize(reader);
+        reader.Close();
+    }
 }
